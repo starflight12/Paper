@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shane Freeder <theboyetronic@gmail.com>
+Date: Thu, 2 Jun 2022 01:42:43 +0100
+Subject: [PATCH] Configurable chat thread limit
+
+By default, spigot shifts chat over to an unbounded thread pool,
+on a normal server, this really offers no gains, the creation of a thread
+on submitting to the pool on these servers eats more time vs just running it in
+the netty pipeline, however, on servers using plugins which do work in here, there
+could be some overall benefits to moving this stuff outside of the pipeline.
+
+In general, this patch does two things:
+1) Exposes the core size for the pool, this allows for ensuring that a number of threads
+sit around in the pool, mitigating the need for creating new threads; This IS however
+caveated, the ThreadPoolExecutor will ONLY create core threads as they're needed, it
+just won't allow for us to dip back under the # of core threads, this can potentially
+be mitigated by calling prestartCoreThread, however, I'm not sure if there is much justification
+for this
+2) Exposes a max size for the pool, as stated, by default this is unbounded, for most
+servers limiting the size of the pool is going to have 0 effects given how fast chat
+is actually processed, this is honestly really just exposed for the misnomers or people
+who just wanna ensure that this won't grow over a specific size if chat gets stupidly active
+
+diff --git a/src/main/java/com/destroystokyo/paper/PaperConfig.java b/src/main/java/com/destroystokyo/paper/PaperConfig.java
+index 8379c6313f06ab3eeaf02bad41d8b835d50e093f..8d901d34f054febc7ff3827ce7f36fb04366da53 100644
+--- a/src/main/java/com/destroystokyo/paper/PaperConfig.java
++++ b/src/main/java/com/destroystokyo/paper/PaperConfig.java
+@@ -698,4 +698,23 @@ public class PaperConfig {
+     private static void resolveSelectorsInBooks() {
+         resolveSelectorsInBooks = getBoolean("settings.resolve-selectors-in-books", false);
+     }
++
++    private static void chatThreads() {
++        int chatExecutorCoreSize = getInt("settings.chat-threads.core-size", -1);
++        int chatExecutorMaxSize = getInt("settings.chat-threads.max-size", -1);
++        if (chatExecutorMaxSize <= 0) chatExecutorMaxSize = Integer.MAX_VALUE; // This is somewhat dumb, but, this is the default, do we cap this?
++
++        if (chatExecutorCoreSize <= 0) {
++            chatExecutorCoreSize = 0;
++        }
++
++        if (chatExecutorMaxSize < chatExecutorCoreSize) {
++            logError("chat-threads.core-size is lower than chat-threads.max-size! Defaulting to core size...");
++            chatExecutorMaxSize = chatExecutorCoreSize;
++        }
++
++        java.util.concurrent.ThreadPoolExecutor executor = ((java.util.concurrent.ThreadPoolExecutor) net.minecraft.network.protocol.game.ServerboundChatPacket.executors);
++        executor.setCorePoolSize(chatExecutorCoreSize);
++        executor.setMaximumPoolSize(chatExecutorMaxSize);
++    }
+ }
+diff --git a/src/main/java/net/minecraft/network/protocol/game/ServerboundChatPacket.java b/src/main/java/net/minecraft/network/protocol/game/ServerboundChatPacket.java
+index 21588ce5a408fed3454c317b56c05439ad3af27d..4cfefd280c1814435c2286dba35fac2c244292ed 100644
+--- a/src/main/java/net/minecraft/network/protocol/game/ServerboundChatPacket.java
++++ b/src/main/java/net/minecraft/network/protocol/game/ServerboundChatPacket.java
+@@ -26,7 +26,7 @@ public class ServerboundChatPacket implements Packet<ServerGamePacketListener> {
+     }
+ 
+     // Spigot Start
+-    private static final java.util.concurrent.ExecutorService executors = java.util.concurrent.Executors.newCachedThreadPool(
++    public static final java.util.concurrent.ExecutorService executors = java.util.concurrent.Executors.newCachedThreadPool( // Paper - make public
+             new com.google.common.util.concurrent.ThreadFactoryBuilder().setDaemon( true ).setNameFormat( "Async Chat Thread - #%d" ).setUncaughtExceptionHandler(new net.minecraft.DefaultUncaughtExceptionHandlerWithName(net.minecraft.server.MinecraftServer.LOGGER)).build() ); // Paper
+     public void handle(final ServerGamePacketListener listener) {
+         if ( !this.message.startsWith("/") )
