@@ -1,0 +1,412 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: starflight12 <starflight.12@outlook.com>
+Date: Sun, 17 Jul 2022 10:08:26 -0400
+Subject: [PATCH] Add InstrumentItemMeta
+
+Implements io.papermc.paper.inventory.meta.InstrumentItemMeta for Material.GOAT_HORNs.
+
+Also overwrites methods in net.minecraft.world.item.InstrumentItem, using io.papermc.paper.Instrument to get
+information about what sound the item should play and how long the item should be on cooldown.
+
+diff --git a/src/main/java/net/minecraft/world/item/InstrumentItem.java b/src/main/java/net/minecraft/world/item/InstrumentItem.java
+index 388848a0477fdeebee4c686910165a0c3874ce47..9b0165a08b49f735a09394cdb2e9451a9d7f4526 100644
+--- a/src/main/java/net/minecraft/world/item/InstrumentItem.java
++++ b/src/main/java/net/minecraft/world/item/InstrumentItem.java
+@@ -80,22 +80,48 @@ public class InstrumentItem extends Item {
+     @Override
+     public InteractionResultHolder<ItemStack> use(Level world, Player user, InteractionHand hand) {
+         ItemStack itemStack = user.getItemInHand(hand);
+-        Optional<Holder<Instrument>> optional = this.getInstrument(itemStack);
+-        if (optional.isPresent()) {
+-            Instrument instrument = optional.get().value();
+-            user.startUsingItem(hand);
+-            play(world, user, instrument);
+-            user.getCooldowns().addCooldown(this, instrument.useDuration());
+-            return InteractionResultHolder.consume(itemStack);
+-        } else {
++        // Paper start - Use io.papermc.paper.Instrument to decide on the sound instead
++        /*
++            Optional<Holder<Instrument>> optional = this.getInstrument(itemStack);
++            if (optional.isPresent()) {
++                Instrument instrument = optional.get().value();
++                user.startUsingItem(hand);
++                play(world, user, instrument);
++                user.getCooldowns().addCooldown(this, instrument.useDuration());
++                return InteractionResultHolder.consume(itemStack);
++            } else {
++                return InteractionResultHolder.fail(itemStack);
++            }
++        */
++        io.papermc.paper.Instrument instrument = getInstrument(org.bukkit.craftbukkit.inventory.CraftItemStack.asCraftMirror(itemStack));
++        if (instrument == null) {
+             return InteractionResultHolder.fail(itemStack);
+         }
++        user.startUsingItem(hand);
++        float range = instrument.getRange()/16.0F;
++        net.kyori.adventure.sound.Sound sound = net.kyori.adventure.sound.Sound.sound(instrument.getSoundKey(), net.kyori.adventure.sound.Sound.Source.RECORD, range, 1);
++
++        org.bukkit.entity.Entity emitter = user.getBukkitEntity();
++        
++        world.getWorld().playSound(sound, emitter);
++        world.gameEvent(GameEvent.INSTRUMENT_PLAY, user.position(), GameEvent.Context.of(user));
++
++        user.getCooldowns().addCooldown(this, instrument.getUseCooldown());
++        
++        return InteractionResultHolder.consume(itemStack);
++        // Paper end
+     }
+ 
+     @Override
+     public int getUseDuration(ItemStack stack) {
+-        Optional<Holder<Instrument>> optional = this.getInstrument(stack);
+-        return optional.isPresent() ? optional.get().value().useDuration() : 0;
++        // Paper start - Use io.papermc.paper.Instrument to get the use duration instead
++        /*
++            Optional<Holder<Instrument>> optional = this.getInstrument(stack);
++            return optional.isPresent() ? optional.get().value().useDuration() : 0;
++        */
++        io.papermc.paper.Instrument instrument = getInstrument(org.bukkit.craftbukkit.inventory.CraftItemStack.asCraftMirror(stack));
++        return instrument == null ? 0 : instrument.getUseCooldown();
++        // Paper end
+     }
+ 
+     private Optional<Holder<Instrument>> getInstrument(ItemStack stack) {
+@@ -111,6 +137,25 @@ public class InstrumentItem extends Item {
+         return iterator.hasNext() ? Optional.of(iterator.next()) : Optional.empty();
+     }
+ 
++    // Paper start - Add custom getInstrument method
++    @org.jetbrains.annotations.Nullable
++    private io.papermc.paper.Instrument getInstrument(org.bukkit.inventory.ItemStack craftItemStack) {
++        org.bukkit.inventory.meta.ItemMeta meta = craftItemStack.getItemMeta();
++        if (!(meta instanceof io.papermc.paper.inventory.meta.InstrumentItemMeta)) {
++            org.apache.logging.log4j.LogManager.getLogger().warn(
++                "Trying to get an instrument from an net.minecraft.world.item.InstrumentItem who's meta is not an instance of io.papermc.paper.inventory.meta.InstrumentItemMeta. Returning a null instrument."
++            );
++            return null;
++        }
++        io.papermc.paper.inventory.meta.InstrumentItemMeta instrumentMeta = (io.papermc.paper.inventory.meta.InstrumentItemMeta) craftItemStack.getItemMeta();
++        io.papermc.paper.Instrument instrument = instrumentMeta.getInstrument();
++        if (!instrumentMeta.hasInstrument()) {
++            instrument = io.papermc.paper.Instrument.getDefaultInstrument(craftItemStack.getType());
++        }
++        return instrument;
++    }
++    // Paper end
++
+     @Override
+     public UseAnim getUseAnimation(ItemStack stack) {
+         return UseAnim.TOOT_HORN;
+diff --git a/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemFactory.java b/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemFactory.java
+index 09b6475b77ebc7f43c13861aa2af26e2f6e6a8b5..e00f4154a723929af5a22f0b0e50bde236644a2d 100644
+--- a/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemFactory.java
++++ b/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemFactory.java
+@@ -294,6 +294,10 @@ public final class CraftItemFactory implements ItemFactory {
+             return meta instanceof CraftMetaCompass ? meta : new CraftMetaCompass(meta);
+         case BUNDLE:
+             return meta instanceof CraftMetaBundle ? meta : new CraftMetaBundle(meta);
++        // Paper start - Add InstrumentItemMeta
++        case GOAT_HORN:
++            return meta instanceof CraftMetaInstrumentItem ? meta : new CraftMetaInstrumentItem(meta);
++        // Paper end
+         default:
+             return new CraftMetaItem(meta);
+         }
+diff --git a/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemStack.java b/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemStack.java
+index f5363a753e5d24ccda946a9d65132eed28f19172..06e4696c1338d05812f30f15f5b1ae206cf432c4 100644
+--- a/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemStack.java
++++ b/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemStack.java
+@@ -522,6 +522,10 @@ public final class CraftItemStack extends ItemStack {
+                 return new CraftMetaCompass(item.getTag());
+             case BUNDLE:
+                 return new CraftMetaBundle(item.getTag());
++            // Paper start - Add InstrumentItemMeta
++            case GOAT_HORN:
++                return new CraftMetaInstrumentItem(item.getTag());
++            // Paper end
+             default:
+                 return new CraftMetaItem(item.getTag());
+         }
+diff --git a/src/main/java/org/bukkit/craftbukkit/inventory/CraftMetaInstrumentItem.java b/src/main/java/org/bukkit/craftbukkit/inventory/CraftMetaInstrumentItem.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..43fe21afc9e32f29e60d56f4608fb1b8d34d3c20
+--- /dev/null
++++ b/src/main/java/org/bukkit/craftbukkit/inventory/CraftMetaInstrumentItem.java
+@@ -0,0 +1,141 @@
++package org.bukkit.craftbukkit.inventory;
++
++import java.util.Map;
++
++import org.bukkit.Material;
++import org.bukkit.NamespacedKey;
++import org.bukkit.configuration.serialization.DelegateDeserialization;
++
++import com.google.common.collect.ImmutableMap;
++
++import io.papermc.paper.Instrument;
++import io.papermc.paper.inventory.meta.InstrumentItemMeta;
++import net.minecraft.nbt.CompoundTag;
++
++@DelegateDeserialization(CraftMetaItem.SerializableMeta.class)
++public class CraftMetaInstrumentItem extends CraftMetaItem implements InstrumentItemMeta {
++    static final ItemMetaKey INSTRUMENT = new ItemMetaKey("instrument", "instrument");
++
++    private NamespacedKey instrument;
++
++    CraftMetaInstrumentItem(CraftMetaItem meta) {
++        super(meta);
++
++        if (!(meta instanceof CraftMetaInstrumentItem)) {
++            return;
++        }
++
++        CraftMetaInstrumentItem goatHorn = (CraftMetaInstrumentItem) meta;
++
++        this.instrument = goatHorn.instrument;
++    }
++
++    CraftMetaInstrumentItem(CompoundTag tag) {
++        super(tag);
++
++        if (tag.contains(INSTRUMENT.NBT)) {
++            this.instrument = NamespacedKey.fromString(tag.getString(INSTRUMENT.NBT));
++        }
++    }
++
++    CraftMetaInstrumentItem(Map<String, Object> map) {
++        super(map);
++
++        String instrument = SerializableMeta.getString(map, INSTRUMENT.BUKKIT, true);
++        if (instrument != null) {
++            this.instrument = NamespacedKey.fromString(instrument);
++        }
++    }
++
++    @Override
++    void applyToItem(CompoundTag tag) {
++        super.applyToItem(tag);
++
++        if (instrument != null) {
++            tag.putString(INSTRUMENT.NBT, this.instrument.asString());
++        }
++    }
++
++    @Override
++    boolean applicableTo(Material type) {
++        switch(type) {
++            case GOAT_HORN:
++                return true;
++            default:
++                return false;
++        }
++    }
++
++    @Override
++    boolean equalsCommon(CraftMetaItem meta) {
++        if (!super.equalsCommon(meta)) {
++            return false;
++        }
++
++        if (meta instanceof CraftMetaInstrumentItem) {
++            CraftMetaInstrumentItem that = (CraftMetaInstrumentItem) meta;
++            return this.instrument == that.instrument;
++        }
++
++        return true;
++    }
++
++    @Override
++    boolean notUncommon(CraftMetaItem meta) {
++        return super.notUncommon(meta) && (meta instanceof CraftMetaInstrumentItem || this.isEmpty());
++    }
++
++    @Override
++    boolean isEmpty() {
++        return super.isEmpty() && this.isGoatHornEmpty();
++    }
++
++    boolean isGoatHornEmpty() {
++        return !this.hasInstrument();
++    }
++
++    @Override
++    int applyHash() {
++        final int original;
++        int hash = original = super.applyHash();
++
++        if (this.hasInstrument()) {
++            hash = 61 * hash + this.instrument.hashCode();
++        }
++        return original != hash ? CraftMetaInstrumentItem.class.hashCode() ^ hash : hash;
++    }
++
++    @Override
++    public CraftMetaInstrumentItem clone() {
++        return (CraftMetaInstrumentItem) super.clone();
++    }
++
++    @Override
++    ImmutableMap.Builder<String, Object> serialize(ImmutableMap.Builder<String, Object> builder) {
++        super.serialize(builder);
++
++        if (this.hasInstrument()) {
++            builder.put(INSTRUMENT.BUKKIT, this.instrument.asString());
++        }
++
++        return builder;
++    }
++
++    @Override
++    public void setInstrument(Instrument instrument) {
++        this.instrument = instrument.getKey();
++    }
++
++    @Override
++    public Instrument getInstrument() {
++        if (!this.hasInstrument()) {
++            return null;
++        }
++        return Instrument.get(this.instrument);
++    }
++
++    @Override
++    public boolean hasInstrument() {
++        return this.instrument != null;
++    }
++}
+diff --git a/src/main/java/org/bukkit/craftbukkit/inventory/CraftMetaItem.java b/src/main/java/org/bukkit/craftbukkit/inventory/CraftMetaItem.java
+index 3c4dadd0012c11191c873fe25a7625193563915d..2a9cf16fe25a4faa2276cdfddaf39019eba9854c 100644
+--- a/src/main/java/org/bukkit/craftbukkit/inventory/CraftMetaItem.java
++++ b/src/main/java/org/bukkit/craftbukkit/inventory/CraftMetaItem.java
+@@ -170,6 +170,7 @@ class CraftMetaItem implements ItemMeta, Damageable, Repairable, BlockDataMeta {
+                     .put(CraftMetaEntityTag.class, "ENTITY_TAG")
+                     .put(CraftMetaCompass.class, "COMPASS")
+                     .put(CraftMetaBundle.class, "BUNDLE")
++                    .put(CraftMetaInstrumentItem.class, "GOAT_HORN") // Paper - Add InstrumentItemMeta
+                     .put(CraftMetaItem.class, "UNSPECIFIC")
+                     .build();
+ 
+@@ -1645,6 +1646,7 @@ class CraftMetaItem implements ItemMeta, Damageable, Repairable, BlockDataMeta {
+                         CraftMetaArmorStand.MARKER.NBT,
+                         CAN_DESTROY.NBT,
+                         CAN_PLACE_ON.NBT,
++                        CraftMetaInstrumentItem.INSTRUMENT.NBT,
+                         // Paper end
+                         CraftMetaCompass.LODESTONE_DIMENSION.NBT,
+                         CraftMetaCompass.LODESTONE_POS.NBT,
+diff --git a/src/test/java/io/papermc/paper/inventory/CraftMetaInstrumentItemTest.java b/src/test/java/io/papermc/paper/inventory/CraftMetaInstrumentItemTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..6deeb53ef1869cb6fd5ddbf42cb04418afb5bc80
+--- /dev/null
++++ b/src/test/java/io/papermc/paper/inventory/CraftMetaInstrumentItemTest.java
+@@ -0,0 +1,78 @@
++package io.papermc.paper.inventory;
++
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertNotNull;
++import static org.junit.Assert.assertTrue;
++
++import java.util.HashMap;
++import java.util.Iterator;
++import java.util.Map;
++
++import org.junit.Test;
++
++import io.papermc.paper.Instrument;
++import net.minecraft.core.Registry;
++
++public class CraftMetaInstrumentItemTest {
++    @Test
++    public void verifyNamespaceAndSoundKeys() {
++        Map<String, Instrument> namespacedKeyToInstrument = new HashMap<>();
++        Map<String, Instrument> soundKeyToInstrument = new HashMap<>();
++
++        for (Instrument instrument : Instrument.getAll()) {
++            String namespacedKey = instrument.getKey().asString();
++            String soundKey = instrument.getSoundKey().asString();
++            assertFalse(
++                "Multiple Instruments exist with the same namespaced key! (" + namespacedKey + ")",
++                namespacedKeyToInstrument.containsKey(namespacedKey)
++            );
++            assertFalse(
++                "Multiple Instruments exist with the same sound key! (" + soundKey + ")",
++                namespacedKeyToInstrument.containsKey(soundKey)
++            );
++            namespacedKeyToInstrument.put(namespacedKey, instrument);
++            soundKeyToInstrument.put(soundKey, instrument);
++        }
++
++        Iterator<net.minecraft.world.item.Instrument> instruments = Registry.INSTRUMENT.iterator();
++
++        while (instruments.hasNext()) {
++            net.minecraft.world.item.Instrument instrument = instruments.next();
++
++            String namespacedKey = Registry.INSTRUMENT.getKey(instrument).toString();
++            String soundKey = instrument.soundEvent().getLocation().toString();
++            Instrument namespaceRemoved = namespacedKeyToInstrument.remove(namespacedKey);
++            Instrument soundKeyRemoved = soundKeyToInstrument.remove(soundKey);
++
++            assertNotNull(
++                "No Instrument found for " + namespacedKey + " by namespaced key!",
++                namespaceRemoved
++            );
++            assertNotNull(
++                "No Instrument found for " + namespacedKey + " by sound key!",
++                soundKeyRemoved
++            );
++
++            assertEquals(
++                "Instrument got by namespaced key doesn't match one got by sound key for" + namespacedKey + "!",
++                namespaceRemoved,
++                soundKeyRemoved
++            );
++        }
++        assertTrue(
++            "Not all pre-defined instruments have vanilla counterparts! (" + namespacedKeyToInstrument.keySet().toString() + ")",
++            namespacedKeyToInstrument.isEmpty()
++        );
++
++        /*
++            namespacedKeyToInstrument and soundKeyToInstrument should both be
++            the same size, but in case an above test was changed, check both
++            for being empty.
++        */
++        assertTrue(
++            "Not all pre-defined instrument sounds have matching vanilla instruments! (" + soundKeyToInstrument.keySet().toString() + ")",
++            soundKeyToInstrument.isEmpty()
++        );
++    }
++}
+diff --git a/src/test/java/org/bukkit/craftbukkit/inventory/ItemMetaTest.java b/src/test/java/org/bukkit/craftbukkit/inventory/ItemMetaTest.java
+index 44bc92bea0fa0742ef861e16eba3e57d9c6e49ce..2fef4fb1f8266bc953fa7deef6f1ac011e7bc9ee 100644
+--- a/src/test/java/org/bukkit/craftbukkit/inventory/ItemMetaTest.java
++++ b/src/test/java/org/bukkit/craftbukkit/inventory/ItemMetaTest.java
+@@ -55,6 +55,9 @@ import org.bukkit.potion.PotionType;
+ import org.bukkit.support.AbstractTestingBase;
+ import org.junit.Test;
+ 
++import io.papermc.paper.Instrument;
++import io.papermc.paper.inventory.meta.InstrumentItemMeta;
++
+ public class ItemMetaTest extends AbstractTestingBase {
+ 
+     static final int MAX_FIREWORK_POWER = 127; // Please update ItemStackFireworkTest if/when this gets changed.
+@@ -389,7 +392,17 @@ public class ItemMetaTest extends AbstractTestingBase {
+                     cleanStack.setItemMeta(meta);
+                     return cleanStack;
+                 }
++            // Paper start - Add InstrumentItemMeta test
++            },
++            new StackProvider(Material.GOAT_HORN) {
++                @Override ItemStack operate(ItemStack cleanStack) {
++                    final InstrumentItemMeta meta = (InstrumentItemMeta) cleanStack.getItemMeta();
++                    meta.setInstrument(Instrument.PONDER_GOAT_HORN);
++                    cleanStack.setItemMeta(meta);
++                    return cleanStack;
++                }
+             }
++            // Paper end
+         );
+ 
+         assertThat("Forgotten test?", providers, hasSize(ItemStackTest.COMPOUND_MATERIALS.length - 4/* Normal item meta, skulls, eggs and tile entities */));

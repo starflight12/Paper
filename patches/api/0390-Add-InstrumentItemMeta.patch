@@ -1,0 +1,612 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: starflight12 <starflight.12@outlook.com>
+Date: Sun, 17 Jul 2022 09:10:13 -0400
+Subject: [PATCH] Add InstrumentItemMeta
+
+Adds a class, io.papermc.paper.Instrument, which stores information about playable instruments. This class also stores
+a map of all created instruments and their namespaced key, allowing them to be easily accessed.
+
+Adds an InstrumentItemMeta, which has setter and getter methods for an io.papermc.paper.Instrument, changing the
+namespaced key stored by the item to match the Instrument's namespaced key.
+
+diff --git a/src/main/java/io/papermc/paper/Instrument.java b/src/main/java/io/papermc/paper/Instrument.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..27c63ffcb44e06ce05d69287073fe26eb70aedc0
+--- /dev/null
++++ b/src/main/java/io/papermc/paper/Instrument.java
+@@ -0,0 +1,305 @@
++package io.papermc.paper;
++
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Map;
++
++import org.bukkit.Material;
++import org.bukkit.NamespacedKey;
++import org.jetbrains.annotations.NotNull;
++import org.jetbrains.annotations.Nullable;
++
++/**
++ * Represents a sound that can be attached to an {@link io.papermc.paper.inventory.meta.InstrumentItemMeta} item.
++ */
++public class Instrument implements org.bukkit.Keyed {
++
++    private static final Map<NamespacedKey, Instrument> BY_KEY = new HashMap<>();
++    private static final Map<Material, Instrument> DEFAULT_SOUNDS = new HashMap<>();
++    private static final List<Instrument> VANILLA_INSTRUMENTS = new ArrayList<>();
++
++    private final NamespacedKey instrumentKey;
++    private final net.kyori.adventure.key.Key soundKey;
++    private final float range;
++    private final int useCooldown;
++
++    /**
++     * @param instrumentKey The {@link NamespacedKey} corresponding to the instrument.
++     * @param soundKey      The {@link net.kyori.adventure.key.Key} corresponding to the sound that the instrument will
++     *                      play.
++     * @param useCooldown   The amount of time, in ticks, that the item should be on cooldown for after playing the
++     *                      instrument.
++     * @param range         The distance that the instrument should be heard for when played, in blocks.
++     */
++    private Instrument(@NotNull NamespacedKey instrumentKey,
++                       @NotNull net.kyori.adventure.key.Key soundKey,
++                       int useCooldown,
++                       float range
++                      ) {
++        this.instrumentKey = instrumentKey;
++        this.soundKey = soundKey;
++        this.range = range;
++        this.useCooldown = useCooldown;
++    }
++
++    /**
++     * Returns an {@link Instrument} object with the given instrument key.
++     * <br><br>
++     * If an instrument with the given key exists, the instrument will be
++     * returned, even if soundKey, useCooldown or range are different from
++     * the specified parameters.
++     * 
++     * @param instrumentKey The {@link NamespacedKey} corresponding to the instrument.
++     *                      This will be stored in item NBT, so the key shouldn't
++     *                      change between executions.
++     * @param soundKey      The {@link net.kyori.adventure.key.Key} corresponding to the sound
++     *                      that will be played. This will only take effect if the instrument
++     *                      is being created.
++     * @param useCooldown   The number of ticks that an item should be on cooldown for after
++     *                      playing the sound. This will only take effect if the instrument is
++     *                      being created.
++     * @param range         The distance that the sound should be heard at when played, in
++     *                      blocks. This will only take effect if the instrument is being created.
++     * 
++     * @return The instrument corresponding to the given key. The instrument might be newly created,
++     *         or it might have already existed.
++     */
++    @NotNull
++    public static Instrument getOrCreate(@NotNull NamespacedKey instrumentKey,
++                                         @NotNull net.kyori.adventure.key.Key soundKey,
++                                         int useCooldown,
++                                         float range
++                                        ) {
++        Instrument instrument = Instrument.get(instrumentKey);
++
++        if (instrument == null) {
++            instrument = Instrument.create(instrumentKey, soundKey, useCooldown, range);
++        }
++        return instrument;
++    }
++
++    /**
++     * Creates a new instrument.
++     *
++     * @param instrumentKey A unique key corresponding to the instrument.
++     * @param soundKey      A {@link net.kyori.adventure.key.Key} representing the sound that the instrument will play.
++     * @param useCooldown   The amount of time, in ticks, that the item should be on cooldown for after
++     *                      the instrument is played.
++     * @param range         The distance that the goat horn should be heard for, in blocks.
++     *
++     * @throws IllegalArgumentException If an instrument with the same instrumentKey already exists.
++     * @see Instrument#getOrCreate
++     */
++    @NotNull
++    private static Instrument create(@NotNull NamespacedKey instrumentKey,
++                                     @NotNull net.kyori.adventure.key.Key soundKey,
++                                     int useCooldown,
++                                     float range
++                                    ) throws IllegalArgumentException {
++        Instrument instrument = new Instrument(instrumentKey, soundKey, useCooldown, range);
++        if (BY_KEY.containsKey(instrumentKey)) {
++            throw new IllegalArgumentException("Instrument already registered: " + instrumentKey.asString());
++        }
++        BY_KEY.put(instrumentKey, instrument);
++        return instrument;
++    }
++
++    /**
++     * Creates a new vanilla instrument, using the vanilla defaults for cooldown and range and a key in the
++     * <code>minecraft:</code> namespace.
++     * <br><br>
++     * This should only be used for creating vanilla instruments.
++     */
++    @NotNull
++    private static Instrument create(@NotNull String instrumentKey,
++                                     @NotNull org.bukkit.Sound sound
++                                    ) {
++        Instrument instrument = Instrument.create(NamespacedKey.minecraft(instrumentKey), sound.key(), 140, 256f);
++        VANILLA_INSTRUMENTS.add(instrument);
++        return instrument;
++    }
++
++    /**
++     * Gets all vanilla instruments.
++     *
++     * @return A list of all vanilla instruments.
++     */
++    @NotNull
++    public static Collection<Instrument> getVanillaInstruments() {
++        return new ArrayList<>(VANILLA_INSTRUMENTS);
++    }
++
++    /**
++     * Gets the instrument corresponding to a {@link NamespacedKey}.
++     * 
++     * @param key The key of the instrument to get.
++     * @return The instrument corresponding to the key, or <code>null</code> if no instrument exists with the key.
++     */
++    @Nullable
++    public static Instrument get(@NotNull NamespacedKey key) {
++        return BY_KEY.get(key);
++    }
++
++    /**
++     * Gets the key stored in NBT that corresponds to this instrument.
++     * 
++     * @return The key of this instrument
++     */
++    @Override
++    @NotNull
++    public NamespacedKey getKey() {
++        return instrumentKey;
++    }
++
++    /**
++     * Gets the {@link net.kyori.adventure.key.Key} representing the sound that this instrument will play.
++     * 
++     * @return The key representing the sound that this instrument will play.
++     */
++    @NotNull
++    public net.kyori.adventure.key.Key getSoundKey() {
++        return soundKey;
++    }
++
++    /**
++     * Gets the range that the instrument can be heard at, in blocks.
++     *
++     * @return The range that the instrument can be heard at
++     */
++    public float getRange() {
++        return this.range;
++    }
++
++    /**
++     * Gets the amount of time, in ticks, that the item will be on cooldown for after the instrument is played.
++     * @return The amount of time, in ticks, that the item will be on cooldown for after the instrument is played.
++     */
++    public int getUseCooldown() {
++        return this.useCooldown;
++    }
++
++    /**
++     * Sets this instrument to be the default instrument for a certain material. The same instrument can be the default
++     * instrument for multiple materials, however each material only has one default instrument.
++     *
++     * @param material The material that this instrument should be the default instrument for.
++     * @throws IllegalArgumentException If the material already has a default instrument set.
++     */
++    private void setDefault(Material material) throws IllegalArgumentException {
++        if (DEFAULT_SOUNDS.containsKey(material)) {
++            throw new IllegalArgumentException("Default sound already registered for material: " + material.toString());
++        }
++        DEFAULT_SOUNDS.put(material, this);
++    }
++
++    /**
++     * Gets the default instrument for a certain material.
++     * 
++     * @param material The material to get the default instrument for.
++     * @return The default instrument for the material, or <code>null</code> if no default instrument exists for the
++     *         material.
++     */
++    @Nullable
++    public static Instrument getDefaultInstrument(@NotNull Material material) {
++        return DEFAULT_SOUNDS.get(material);
++    }
++
++    /**
++     * Gets all created instruments.
++     * <br><br>
++     * Note that this will return <b>all</b> instruments, including those created by plugins.
++     * To only get vanilla instruments, use {@link Instrument#getVanillaInstruments()}.
++     * 
++     * @return A list of all created instruments.
++     */
++    @NotNull
++    public static Collection<Instrument> getAll() {
++        return new HashSet<>(BY_KEY.values());
++    }
++
++    /**
++     * Checks if two instruments are identical.
++     * 
++     * @param other The instrument to compare to.
++     * @return <code>true</code> if the instruments are identical, <code>false</code> otherwise.
++     */
++    @Override
++    public boolean equals(Object other) {
++        if (other == null) {
++            return false;
++        }
++        if (!(other instanceof Instrument)) {
++            return false;
++        }
++        Instrument otherInstrument = (Instrument) other;
++        return (
++            this.instrumentKey.equals(otherInstrument.instrumentKey) &&
++            this.soundKey.asString().equals(otherInstrument.soundKey.asString()) &&
++            this.range == otherInstrument.range &&
++            this.useCooldown == otherInstrument.useCooldown
++        );
++    }
++
++    /*
++        WARNING:
++            Instrument keys that are used by vanilla (i.e. the 8 goat horn sounds) should not have their sounds changed,
++            unless they change in vanilla. The sounds are played both client and server-side, so changing the sound that
++            is sent will cause both sounds to play simultaneously.
++    */
++
++    /**
++     * Ponder goat horn sound
++     * <br>
++     * The default instrument for {@link Material#GOAT_HORN}.
++     */
++    public static final Instrument PONDER_GOAT_HORN = Instrument.create("ponder_goat_horn",
++                                                                        org.bukkit.Sound.ITEM_GOAT_HORN_SOUND_0);
++    static {
++        PONDER_GOAT_HORN.setDefault(Material.GOAT_HORN);
++    }
++
++    /**
++     * Sing goat horn sound
++     */
++    public static final Instrument SING_GOAT_HORN = Instrument.create("sing_goat_horn",
++                                                                      org.bukkit.Sound.ITEM_GOAT_HORN_SOUND_1);
++
++    /**
++     * Seek goat horn sound
++     */
++    public static final Instrument SEEK_GOAT_HORN = Instrument.create("seek_goat_horn",
++                                                                      org.bukkit.Sound.ITEM_GOAT_HORN_SOUND_2);
++
++    /**
++     * Feel goat horn sound
++     */
++    public static final Instrument FEEL_GOAT_HORN = Instrument.create("feel_goat_horn",
++                                                                      org.bukkit.Sound.ITEM_GOAT_HORN_SOUND_3);
++
++    /**
++     * Admire goat horn sound
++     */
++    public static final Instrument ADMIRE_GOAT_HORN = Instrument.create("admire_goat_horn",
++                                                                        org.bukkit.Sound.ITEM_GOAT_HORN_SOUND_4);
++
++    /**
++     * Call goat horn sound
++     */
++    public static final Instrument CALL_GOAT_HORN = Instrument.create("call_goat_horn",
++                                                                      org.bukkit.Sound.ITEM_GOAT_HORN_SOUND_5);
++
++    /**
++     * Yearn goat horn sound
++     */
++    public static final Instrument YEARN_GOAT_HORN = Instrument.create("yearn_goat_horn",
++                                                                       org.bukkit.Sound.ITEM_GOAT_HORN_SOUND_6);
++
++    /**
++     * Dream goat horn sound
++     */
++    public static final Instrument DREAM_GOAT_HORN = Instrument.create("dream_goat_horn",
++                                                                       org.bukkit.Sound.ITEM_GOAT_HORN_SOUND_7);
++}
+diff --git a/src/main/java/io/papermc/paper/inventory/meta/InstrumentItemMeta.java b/src/main/java/io/papermc/paper/inventory/meta/InstrumentItemMeta.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..52fc767729b81effbf0351f14e9f0f20635d3274
+--- /dev/null
++++ b/src/main/java/io/papermc/paper/inventory/meta/InstrumentItemMeta.java
+@@ -0,0 +1,46 @@
++package io.papermc.paper.inventory.meta;
++
++import org.bukkit.inventory.meta.ItemMeta;
++import org.jetbrains.annotations.Nullable;
++
++import io.papermc.paper.Instrument;
++
++public interface InstrumentItemMeta extends ItemMeta {
++
++    /**
++     * Sets the {@link Instrument} that the item will play.
++     *
++     * @param instrument The instrument to play. Setting it to <code>null</code> will cause the default instrument for
++     *                   the item to be played, or no instrument to be played if there is no default instrument.
++     */
++    public void setInstrument(@Nullable Instrument instrument);
++
++    /**
++     * Gets the instrument that the item will play.
++     * <br><br>
++     * It is possible for {@link InstrumentItemMeta#hasInstrument()} to return <code>true</code>, but this to return
++     * <code>null</code>, if there isn't an {@link Instrument} object with a key corresponding to the key stored in the
++     * item.
++     *
++     * @return The instrument that the item will play, or <code>null</code> if there is no
++     *         {@link Instrument} object with the item's key. If this returns <code>null</code>,
++     *         {@link InstrumentItemMeta#hasInstrument()} should be used to determine whether
++     *         the default instrument would be played or no instrument would be played.
++     */
++    @Nullable
++    public Instrument getInstrument();
++
++    /**
++     * Checks if the item has an instrument explicitly set (i.e. Won't play the default instrument).
++     * <br><br>
++     * This could return <code>true</code> even if {@link InstrumentItemMeta#getInstrument()} returns <code>null</code>,
++     * if there is an instrument explicitly set but no corresponding {@link Instrument} object.
++     * <br><br>
++     * If the item has an instrument set, but the string stored in the item isn't a valid
++     * {@link org.bukkit.NamespacedKey}, this will return <code>false</code>.
++     *
++     * @return <code>false</code> if the item will play the default instrument for the item. The default instrument can
++     * be determined with {@link Instrument#getDefaultInstrument}.
++     */
++    public boolean hasInstrument();
++}
+diff --git a/src/test/java/io/papermc/paper/InstrumentTest.java b/src/test/java/io/papermc/paper/InstrumentTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..26304494396265b53c427c2d0bd0a3d5a41828a3
+--- /dev/null
++++ b/src/test/java/io/papermc/paper/InstrumentTest.java
+@@ -0,0 +1,232 @@
++package io.papermc.paper;
++
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertNotNull;
++import static org.junit.Assert.assertTrue;
++
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.List;
++
++import org.bukkit.Material;
++import org.bukkit.NamespacedKey;
++import org.junit.Test;
++
++import net.kyori.adventure.key.Key;
++
++public class InstrumentTest {
++    
++    @Test
++    public void vanillaAreMinecraftNamespaced() {
++        for (Instrument instrument : Instrument.getVanillaInstruments()) {
++            assertEquals(
++                "Vanilla instrument not in the minecraft namespace",
++                instrument.getKey().getNamespace(),
++                NamespacedKey.MINECRAFT
++            );
++        }
++    }
++
++    @Test
++    public void getOrCreateMakesNonvanillaInstruments() {
++        List<Instrument> vanillaInstrumentsBeforeCreated = new ArrayList<>(Instrument.getVanillaInstruments());
++        Instrument.getOrCreate(
++            new NamespacedKey("paper_tests", "not_vanilla_test_instrument_1"),
++            Key.key("instrument.undefined"),
++            140,
++            256f
++        );
++        Instrument.getOrCreate(
++            NamespacedKey.minecraft("not_vanilla_test_instrument_2"),
++            Key.key("instrument.undefined"),
++            140,
++            256f
++        );
++        List<Instrument> vanillaInstrumentsAfterCreated = new ArrayList<>(Instrument.getVanillaInstruments());
++        for (Instrument instrument : vanillaInstrumentsBeforeCreated) {
++            assertTrue(
++                "Vanilla instrument was removed after non-vanilla instruments were created",
++                vanillaInstrumentsAfterCreated.remove(instrument)
++            );
++        }
++        assertTrue(
++            "Vanilla instruments were added when adding non-vanilla instruments",
++            vanillaInstrumentsAfterCreated.isEmpty()
++        );
++    }
++
++    @Test
++    public void createdInstrumentsAreInGetAll() {
++        Instrument testingInstrument = Instrument.getOrCreate(
++            new NamespacedKey("paper_tests", "created_instruments_added_to_get_all_instrument"),
++            Key.key("instrument.undefined"),
++            140,
++            256f
++        );
++        Collection<Instrument> allInstruments = Instrument.getAll();
++        assertTrue(
++            "Instrument not added to getAll() after creation",
++            allInstruments.contains(testingInstrument)
++        );
++    }
++
++    @Test
++    public void dataPersists() {
++        NamespacedKey key = new NamespacedKey("paper_tests", "data_persists_testing_instrument");
++        Instrument createdInstrument = Instrument.getOrCreate(key, Key.key("instrument.undefined"), 140, 256f);
++        Instrument gotInstrument = Instrument.get(key);
++        // All parameters except for key are different, but since key is the same, the instrument should match (all other parameters should be ignored).
++        Instrument gotFromCreateInstrument = Instrument.getOrCreate(key, Key.key("instrument.other_undefined"), 256, 140);
++
++        assertNotNull("gotInstrument is null, even though the instrument was created", gotInstrument);
++
++        // Check that createdInstrument, gotInstrument and gotFromCreateInstrument have the same key, sound, cooldown and range
++
++        // Namespaced key
++        assertEquals(
++            "Created instrument's key doesn't match the instrument got from Instrument#get",
++            createdInstrument.getKey(),
++            gotInstrument.getKey()
++        );
++        assertEquals(
++            "Created instrument's key doesn't match the instrument got from Instrument#getOrCreate",
++            createdInstrument.getKey(),
++            gotFromCreateInstrument.getKey()
++        );
++        assertEquals(
++            "Created instrument's key doesn't match the key set when the instrument was created",
++            createdInstrument.getKey(),
++            key
++        );
++    
++        // Sound key
++        assertEquals(
++            "Created instrument's sound key doesn't match the instrument got from Instrument#get",
++            createdInstrument.getSoundKey(),
++            gotInstrument.getSoundKey()
++        );
++        assertEquals(
++            "Created instrument's sound key doesn't match the instrument got from Instrument#getOrCreate",
++            createdInstrument.getSoundKey(),
++            gotFromCreateInstrument.getSoundKey()
++        );
++        assertEquals(
++            "Created instrument's sound key doesn't match the sound key set when the instrument was created",
++            createdInstrument.getSoundKey(),
++            Key.key("instrument.undefined")
++        );
++
++        // Cooldown
++        assertEquals(
++            "Created instrument's cooldown doesn't match the instrument got from Instrument#get",
++            createdInstrument.getUseCooldown(),
++            gotInstrument.getUseCooldown()
++        );
++        assertEquals(
++            "Created instrument's cooldown doesn't match the instrument got from Instrument#getOrCreate",
++            createdInstrument.getUseCooldown(),
++            gotFromCreateInstrument.getUseCooldown()
++        );
++        assertEquals(
++            "Created instrument's cooldown doesn't match the cooldown set when the instrument was created",
++            createdInstrument.getUseCooldown(),
++            140
++        );
++
++        // Range
++        assertEquals(
++            "Created instrument's range doesn't match the instrument got from Instrument#get",
++            createdInstrument.getRange(),
++            gotInstrument.getRange(),
++            0d
++        );
++        assertEquals(
++            "Created instrument's range doesn't match the instrument got from Instrument#getOrCreate",
++            createdInstrument.getRange(),
++            gotFromCreateInstrument.getRange(),
++            0d
++        );
++        assertEquals(
++            "Created instrument's range doesn't match the range set when the instrument was created",
++            createdInstrument.getRange(),
++            256f,
++            0d
++        );
++    }
++
++    @Test
++    public void checkDefaults() {
++        Instrument defaultForGoatHorn = Instrument.getDefaultInstrument(Material.GOAT_HORN);
++        assertEquals("Default goat horn instrument changed?", defaultForGoatHorn, Instrument.get(NamespacedKey.minecraft("ponder_goat_horn")));
++    }
++
++    @Test
++    public void getAllCantBeModified() {
++        Instrument testingInstrument1 = Instrument.getOrCreate(
++            new NamespacedKey("paper_tests", "unmodifiable_get_all_instrument"),
++            Key.key("instrument.undefined"),
++            140,
++            256f
++        );
++        Instrument testingInstrument2 = Instrument.getOrCreate(
++            new NamespacedKey("paper_tests", "unmodifiable_get_all_extra_instrument"),
++            Key.key("instrument.undefined"),
++            140,
++            256f
++        );
++        Collection<Instrument> allInstruments = Instrument.getAll();
++        int expectedSize = allInstruments.size();
++        allInstruments.clear();
++        if (expectedSize != 0) {
++            assertEquals(
++                "Instrument.getAll() returned a collection that could be modified.",
++                expectedSize,
++                Instrument.getAll().size()
++            );
++        }
++        if (expectedSize == 1) {
++            allInstruments.add(testingInstrument2);
++        }
++        allInstruments.add(testingInstrument1);
++        assertEquals(
++            "Instrument.getAll() returned a collection that could be modified.",
++            expectedSize,
++            Instrument.getAll().size()
++        );
++    }
++
++    @Test
++    public void getVanillaCantBeModified() {
++        Instrument testingInstrument1 = Instrument.getOrCreate(
++            new NamespacedKey("paper_tests", "unmodifiable_get_vanilla_instrument"),
++            Key.key("instrument.undefined"),
++            140,
++            256f
++        );
++        Instrument testingInstrument2 = Instrument.getOrCreate(
++            new NamespacedKey("paper_tests", "unmodifiable_get_vanilla_extra_instrument"),
++            Key.key("instrument.undefined"),
++            140,
++            256f
++        );
++        Collection<Instrument> vanillaInstruments = Instrument.getVanillaInstruments();
++        int expectedSize = vanillaInstruments.size();
++        vanillaInstruments.clear();
++        if (expectedSize != 0) {
++            assertEquals(
++                "Instrument.getVanillaInstruments() returned a collection that could be modified.",
++                expectedSize,
++                Instrument.getVanillaInstruments().size()
++            );
++        }
++        if (expectedSize == 1) {
++            vanillaInstruments.add(testingInstrument2);
++        }
++        vanillaInstruments.add(testingInstrument1);
++        assertEquals(
++            "Instrument.getVanillaInstruments() returned a collection that could be modified.",
++            expectedSize,
++            Instrument.getVanillaInstruments().size()
++        );
++    }
++}
