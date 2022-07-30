@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: starflight12 <starflight.12@outlook.com>
+Date: Sat, 30 Jul 2022 12:35:47 -0400
+Subject: [PATCH] Fix MC-248588
+
+
+diff --git a/src/main/java/net/minecraft/world/level/block/LayeredCauldronBlock.java b/src/main/java/net/minecraft/world/level/block/LayeredCauldronBlock.java
+index a223959f766ac41aff7aeff80606f5e7c37ebf49..b6690153d887c800f29d56c4d1eed2135d468053 100644
+--- a/src/main/java/net/minecraft/world/level/block/LayeredCauldronBlock.java
++++ b/src/main/java/net/minecraft/world/level/block/LayeredCauldronBlock.java
+@@ -21,6 +21,7 @@ import org.bukkit.craftbukkit.block.CraftBlockState;
+ import org.bukkit.craftbukkit.block.CraftBlockStates;
+ import org.bukkit.event.block.CauldronLevelChangeEvent;
+ // CraftBukkit end
++import net.minecraft.world.level.GameRules; // Paper
+ 
+ public class LayeredCauldronBlock extends AbstractCauldronBlock {
+ 
+@@ -63,7 +64,7 @@ public class LayeredCauldronBlock extends AbstractCauldronBlock {
+         if (!new io.papermc.paper.event.entity.EntityInsideBlockEvent(entity.getBukkitEntity(), org.bukkit.craftbukkit.block.CraftBlock.at(world, pos)).callEvent()) { return; } // Paper
+         if (!world.isClientSide && entity.isOnFire() && this.isEntityInsideContent(state, pos, entity)) {
+             // CraftBukkit start
+-            if (entity.mayInteract(world, pos)) {
++            if (entity.mayInteract(world, pos) && entity.level.getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING)) { // Paper - fix MC-248588
+                 if (!this.handleEntityOnFireInsideWithEvent(state, world, pos, entity)) { // Paper - fix powdered snow cauldron extinguishing entities
+                     return;
+                 }
